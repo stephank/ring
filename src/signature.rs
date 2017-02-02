@@ -117,8 +117,7 @@
 //! # fn sign_and_verify_ed25519() -> Result<(), ring::error::Unspecified> {
 //! // Generate a key pair.
 //! let rng = rand::SystemRandom::new();
-//! let (generated, generated_bytes) =
-//!     try!(signature::Ed25519KeyPair::generate_serializable(&rng));
+//! let generated = try!(signature::Ed25519KeyPair::generate(&rng));
 //!
 //! // Normally after generating the key pair, the application would extract
 //! // the private and public components and store them persistently for future
@@ -128,8 +127,8 @@
 //! // key from storage and then create an `Ed25519KeyPair` from the
 //! // deserialized bytes.
 //! let key_pair =
-//!    try!(signature::Ed25519KeyPair::from_bytes(&generated_bytes.private_key,
-//!                                               &generated_bytes.public_key));
+//!    try!(signature::Ed25519KeyPair::from_bytes(generated.private_key_bytes(),
+//!                                               generated.public_key_bytes()));
 //!
 //! // Sign the message "hello, world".
 //! const MESSAGE: &'static [u8] = b"hello, world";
@@ -138,7 +137,7 @@
 //! // Normally, an application would extract the bytes of the signature and
 //! // send them in a protocol message to the peer(s). Here we just use the
 //! // public key from the private key we just generated.
-//! let peer_public_key_bytes = &generated_bytes.public_key;
+//! let peer_public_key_bytes = generated.public_key_bytes();
 //! let sig_bytes = sig.as_slice();
 //!
 //! // Verify the signature of the message using the public key. Normally the
@@ -230,7 +229,6 @@ pub use ec::eddsa::{
     ED25519,
 
     Ed25519KeyPair,
-    Ed25519KeyPairBytes
 };
 
 #[cfg(all(feature = "rsa_signing", feature = "use_heap"))]

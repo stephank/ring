@@ -25,44 +25,21 @@ pub struct Ed25519KeyPair {
     private_public: [u8; 64],
 }
 
-/// The raw bytes of the Ed25519 key pair, for serialization.
-pub struct Ed25519KeyPairBytes {
-    /// Private key bytes.
-    pub private_key: [u8; 32],
-
-    /// Public key bytes.
-    pub public_key: [u8; 32],
-}
-
-impl<'a> Ed25519KeyPair {
-    /// Generates a new random key pair. There is no way to extract the private
-    /// key bytes to save them. If you need to save the private key bytes for
-    /// future use then use `generate_serializable()` instead.
+impl Ed25519KeyPair {
+    /// Generates a new random key pair.
     pub fn generate(rng: &rand::SecureRandom)
                     -> Result<Ed25519KeyPair, error::Unspecified> {
-        Ed25519KeyPair::generate_serializable(rng).map(|(key_pair, _)| key_pair)
-    }
-
-    /// Generates a new key pair and returns the key pair as both an
-    /// `Ed25519KeyPair` and a `Ed25519KeyPairBytes`. There is no way to
-    /// extract the private key bytes from an `Ed25519KeyPair`, so extracting
-    /// the values from the `Ed25519KeyPairBytes` is the only way to get them.
-    pub fn generate_serializable(rng: &rand::SecureRandom)
-            -> Result<(Ed25519KeyPair, Ed25519KeyPairBytes),
-                      error::Unspecified> {
-        let mut bytes = Ed25519KeyPairBytes {
-            private_key: [0; 32],
-            public_key: [0; 32],
-        };
-        try!(rng.fill(&mut bytes.private_key));
+        let mut private_key: [u8; 32] = [0; 32];
+        let mut public_key: [u8; 32] = [0; 32];
+        try!(rng.fill(&mut private_key));
         unsafe {
-            GFp_ed25519_public_from_private(bytes.public_key.as_mut_ptr(),
-                                            bytes.private_key.as_ptr());
+            GFp_ed25519_public_from_private(public_key.as_mut_ptr(),
+                                            private_key.as_ptr());
         }
         let key_pair =
-            try!(Ed25519KeyPair::from_bytes_unchecked(&bytes.private_key,
-                                                      &bytes.public_key));
-        Ok((key_pair, bytes))
+            try!(Ed25519KeyPair::from_bytes_unchecked(&private_key,
+                                                      &public_key));
+        Ok(key_pair)
     }
 
     /// Copies key data from the given slices to create a new key pair. The
@@ -107,8 +84,11 @@ impl<'a> Ed25519KeyPair {
         Ok(pair)
     }
 
+    /// Returns a reference to the little-endian-encoded private key bytes.
+    pub fn private_key_bytes(&self) -> &[u8] { &self.private_public[..32] }
+
     /// Returns a reference to the little-endian-encoded public key bytes.
-    pub fn public_key_bytes(&'a self) -> &'a [u8] { &self.private_public[32..] }
+    pub fn public_key_bytes(&self) -> &[u8] { &self.private_public[32..] }
 
     /// Returns the signature of the message `msg`.
     pub fn sign(&self, msg: &[u8]) -> signature::Signature {
@@ -198,21 +178,23 @@ mod tests {
     #[test]
     fn test_ed25519_from_bytes_misuse() {
         let rng = rand::SystemRandom::new();
-        let (_, bytes) = Ed25519KeyPair::generate_serializable(&rng).unwrap();
+        let key_pair = Ed25519KeyPair::generate(&rng).unwrap();
+        let private_key = key_pair.private_key_bytes();
+        let public_key = key_pair.public_key_bytes();
 
-        assert!(Ed25519KeyPair::from_bytes(&bytes.private_key,
-                                           &bytes.public_key).is_ok());
+        assert!(Ed25519KeyPair::from_bytes(private_key,
+                                           public_key).is_ok());
 
         // Truncated private key.
-        assert!(Ed25519KeyPair::from_bytes(&bytes.private_key[..31],
-                                           &bytes.public_key).is_err());
+        assert!(Ed25519KeyPair::from_bytes(&private_key[..31],
+                                           public_key).is_err());
 
         // Truncated public key.
-        assert!(Ed25519KeyPair::from_bytes(&bytes.private_key,
-                                           &bytes.public_key[..31]).is_err());
+        assert!(Ed25519KeyPair::from_bytes(private_key,
+                                           &public_key[..31]).is_err());
 
         // Swapped public and private key.
-        assert!(Ed25519KeyPair::from_bytes(&bytes.public_key,
-                                           &bytes.private_key).is_err());
+        assert!(Ed25519KeyPair::from_bytes(public_key,
+                                           private_key).is_err());
     }
 }
