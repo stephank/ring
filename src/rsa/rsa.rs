@@ -145,6 +145,13 @@ impl RSAPublicKey {
         Ok(())
     }
 
+    /// Verify a message signature using this public key.
+    pub fn verify(&self, params: &RSAParameters, msg: untrusted::Input,
+                  signature: untrusted::Input)
+                  -> Result<(), error::Unspecified> {
+        verification::verify_rsa(params, self, msg, signature)
+    }
+
     /// Returns the length in bytes of the public modulus.
     ///
     /// A signature has the same length as the public modulus.

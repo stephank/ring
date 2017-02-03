@@ -14,7 +14,7 @@
 
 //! ECDSA Signatures using the P-256 and P-384 curves.
 
-use {der, digest, error, private, signature};
+use {der, digest, error};
 use super::verify_jacobian_point_is_on_the_curve;
 use super::ops::*;
 use super::public_key::*;
@@ -38,7 +38,8 @@ impl ECDSAPublicKey {
     ///
     /// [NIST SP 800-56A, revision 2]:
     ///     http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Ar2.pdf
-    pub fn from_bytes(params: &'static ECDSAParameters, input: untrusted::Input)
+    pub fn from_bytes(params: &'static ECDSAParameters,
+                      input: untrusted::Input)
                       -> Result<ECDSAPublicKey, error::Unspecified> {
         let parsed = try!(parse_uncompressed_point(
             params.ops.public_key_ops, input));
@@ -146,17 +147,6 @@ pub struct ECDSAParameters {
     ops: &'static PublicScalarOps,
     digest_alg: &'static digest::Algorithm,
 }
-
-impl signature::VerificationAlgorithm for ECDSAParameters {
-    fn verify(&'static self, public_key: untrusted::Input,
-              msg: untrusted::Input, signature: untrusted::Input)
-              -> Result<(), error::Unspecified> {
-        let public_key = try!(ECDSAPublicKey::from_bytes(self, public_key));
-        public_key.verify(msg, signature)
-    }
-}
-
-impl private::Private for ECDSAParameters {}
 
 
 /// Calculate the digest of `msg` using the digest algorithm `digest_alg`. Then
@@ -285,22 +275,23 @@ mod tests {
 
             let curve_name = test_case.consume_string("Curve");
             let digest_name = test_case.consume_string("Digest");
+            let (alg, _, _) = alg_from_curve_and_digest(&curve_name,
+                                                        &digest_name);
 
             let msg = test_case.consume_bytes("Msg");
             let msg = untrusted::Input::from(&msg);
 
             let public_key = test_case.consume_bytes("Q");
-            let public_key = untrusted::Input::from(&public_key);
 
             let sig = test_case.consume_bytes("Sig");
             let sig = untrusted::Input::from(&sig);
 
             let expected_result = test_case.consume_string("Result");
 
-            let (alg, _, _) = alg_from_curve_and_digest(&curve_name,
-                                                        &digest_name);
-
-            let actual_result = signature::verify(alg, public_key, msg, sig);
+            let actual_result = signature::ECDSAPublicKey::from_uncompressed(
+                alg, untrusted::Input::from(&public_key)).and_then(|pub_key| {
+                    pub_key.verify(msg, sig)
+                });
             assert_eq!(actual_result.is_ok(), expected_result == "P (0 )");
 
             Ok(())
@@ -341,7 +332,7 @@ mod tests {
     }
 
     fn alg_from_curve_and_digest(curve_name: &str, digest_name: &str)
-                                 -> (&'static signature::VerificationAlgorithm,
+                                 -> (&'static signature::ECDSAParameters,
                                      &'static PublicScalarOps,
                                      &'static digest::Algorithm) {
         if curve_name == "P-256" {
@@ -423,9 +414,10 @@ mod benches {
         let mut i = 0;
         bench.iter(|| {
             let (pub_key, msg, sig) = vectors[i];
+            let pub_key = signature::ECDSAPublicKey(
+                &signature::ECDSA_P256_SHA256_ASN1, pub_key);
             i = (i + 1) % vectors.len();
-            assert!(signature::verify(&signature::ECDSA_P256_SHA256_ASN1,
-                                      pub_key, msg, sig).is_ok());
+            assert!(pub_key.verify(msg, sig).is_ok());
         });
     }
 
@@ -482,9 +474,10 @@ mod benches {
         let mut i = 0;
         bench.iter(|| {
             let (pub_key, msg, sig) = vectors[i];
+            let pub_key = signature::ECDSAPublicKey(
+                &signature::ECDSA_P384_SHA384_ASN1, pub_key);
             i = (i + 1) % vectors.len();
-            assert!(signature::verify(&signature::ECDSA_P384_SHA384_ASN1,
-                                      pub_key, msg, sig).is_ok());
+            assert!(pub_key.verify(msg, sig).is_ok());
         });
     }
 }

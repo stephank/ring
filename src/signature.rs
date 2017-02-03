@@ -143,11 +143,12 @@
 //! // Verify the signature of the message using the public key. Normally the
 //! // verifier of the message would parse the inputs to `signature::verify`
 //! // out of the protocol message(s) sent by the signer.
-//! let peer_public_key = untrusted::Input::from(peer_public_key_bytes);
+//! let peer_public_key =
+//!    try!(signature::Ed25519PublicKey::from_bytes(peer_public_key_bytes));
 //! let msg = untrusted::Input::from(MESSAGE);
 //! let sig = untrusted::Input::from(sig_bytes);
 //!
-//! try!(signature::verify(&signature::ED25519, peer_public_key, msg, sig));
+//! try!(peer_public_key.verify(msg, sig));
 //!
 //! # Ok(())
 //! # }
@@ -194,10 +195,12 @@
 //! let public_key_bytes_der =
 //!     untrusted::Input::from(
 //!         include_bytes!("src/rsa/signature_rsa_example_public_key.der"));
+//! let public_key =
+//!     try!(signature::RSAPublicKey::from_der(public_key_bytes_der));
 //! let message = untrusted::Input::from(MESSAGE);
 //! let signature = untrusted::Input::from(&signature);
-//! try!(signature::verify(&signature::RSA_PKCS1_2048_8192_SHA256,
-//!                        public_key_bytes_der, message, signature));
+//! try!(public_key.verify(&signature::RSA_PKCS1_2048_8192_SHA256,
+//!                        message, signature));
 //! # Ok(())
 //! # }
 //! #
@@ -209,9 +212,6 @@
 //! # fn main() { sign_and_verify_rsa().unwrap() }
 //! ```
 
-
-use {error, init, private};
-use untrusted;
 
 pub use ec::suite_b::ecdsa::{
     ECDSAParameters,
@@ -225,10 +225,6 @@ pub use ec::suite_b::ecdsa::{
 };
 
 pub use ec::eddsa::{
-    EdDSAParameters,
-
-    ED25519,
-
     Ed25519PublicKey,
     Ed25519KeyPair,
 };
@@ -294,48 +290,6 @@ impl<'a> Signature {
 
     /// Returns a reference to the signature's encoded value.
     pub fn as_slice(&'a self) -> &'a [u8] { &self.value[..] }
-}
-
-/// A signature verification algorithm.
-pub trait VerificationAlgorithm: Sync + private::Private {
-    /// Verify the signature `signature` of message `msg` with the public key
-    /// `public_key`.
-    fn verify(&'static self, public_key: untrusted::Input,
-              msg: untrusted::Input, signature: untrusted::Input)
-              -> Result<(), error::Unspecified>;
-}
-
-/// Verify the signature `signature` of message `msg` with the public key
-/// `public_key` using the algorithm `alg`.
-///
-/// # Examples
-///
-/// ## Verify a RSA PKCS#1 signature that uses the SHA-256 digest
-///
-/// ```
-/// extern crate ring;
-/// extern crate untrusted;
-///
-/// use ring::signature;
-///
-/// enum Error {
-///     InvalidSignature,
-/// }
-///
-/// # #[cfg(feature = "use_heap")]
-/// fn verify_rsa_pkcs1_sha256(public_key: untrusted::Input,
-///                            msg: untrusted::Input, sig: untrusted::Input)
-///                            -> Result<(), Error> {
-///    signature::verify(&signature::RSA_PKCS1_2048_8192_SHA256, public_key,
-///                      msg, sig).map_err(|_| Error::InvalidSignature)
-/// }
-/// # fn main() { }
-/// ```
-pub fn verify(alg: &'static VerificationAlgorithm, public_key: untrusted::Input,
-              msg: untrusted::Input, signature: untrusted::Input)
-              -> Result<(), error::Unspecified> {
-    init::init_once();
-    alg.verify(public_key, msg, signature)
 }
 
 

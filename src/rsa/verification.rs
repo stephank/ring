@@ -14,22 +14,11 @@
 
 /// RSA PKCS#1 1.5 signatures.
 
-use {bits, digest, error, private, signature};
+use {bits, digest, error};
 use super::{bigint, N, PUBLIC_KEY_PUBLIC_MODULUS_MAX_LEN,
             RSAParameters, RSAPublicKey};
 use untrusted;
 
-
-impl signature::VerificationAlgorithm for RSAParameters {
-    fn verify(&self, public_key: untrusted::Input, msg: untrusted::Input,
-              signature: untrusted::Input)
-              -> Result<(), error::Unspecified> {
-        let public_key = try!(RSAPublicKey::from_der(public_key));
-        verify_rsa(self, &public_key, msg, signature)
-    }
-}
-
-impl private::Private for RSAParameters {}
 
 macro_rules! rsa_params {
     ( $VERIFY_ALGORITHM:ident, $min_bits:expr, $PADDING_ALGORITHM:expr,
@@ -189,7 +178,8 @@ mod tests {
 
             let expected_result = test_case.consume_string("Result");
 
-            let actual_result = signature::verify(alg, public_key, msg, sig);
+            let actual_result = signature::RSAPublicKey::from_der(
+                public_key).and_then(|pub_key| pub_key.verify(alg, msg, sig));
             assert_eq!(actual_result.is_ok(), expected_result == "P");
 
             Ok(())
@@ -233,7 +223,8 @@ mod tests {
 
             let expected_result = test_case.consume_string("Result");
 
-            let actual_result = signature::verify(alg, public_key, msg, sig);
+            let actual_result = signature::RSAPublicKey::from_der(
+                public_key).and_then(|pub_key| pub_key.verify(alg, msg, sig));
             assert_eq!(actual_result.is_ok(), expected_result == "P");
 
             Ok(())

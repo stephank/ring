@@ -14,11 +14,8 @@
 
 //! EdDSA Signatures.
 
-use {bssl, c, error, private, rand, signature};
+use {bssl, c, error, rand, signature};
 use untrusted;
-
-/// Parameters for EdDSA signing and verification.
-pub struct EdDSAParameters;
 
 /// An Ed25519 public key, for verifying signatures.
 pub struct Ed25519PublicKey<'a>(&'a [u8]);
@@ -142,28 +139,6 @@ impl Ed25519KeyPair {
 }
 
 
-/// Verification of [Ed25519] signatures.
-///
-/// Ed25519 uses SHA-512 as the digest algorithm.
-///
-/// [Ed25519]: https://ed25519.cr.yp.to/
-pub static ED25519: EdDSAParameters = EdDSAParameters {};
-
-impl signature::VerificationAlgorithm for EdDSAParameters {
-    fn verify(&self, public_key: untrusted::Input, msg: untrusted::Input,
-              signature: untrusted::Input) -> Result<(), error::Unspecified> {
-        if signature.len() != 64 {
-            return Err(error::Unspecified);
-        }
-        let public_key = try!(Ed25519PublicKey::from_bytes(
-                              public_key.as_slice_less_safe()));
-        public_key.verify(msg, signature)
-    }
-}
-
-impl private::Private for EdDSAParameters {}
-
-
 extern  {
     fn GFp_ed25519_public_from_private(out: *mut u8/*[32]*/,
                                        in_: *const u8/*[32]*/);
@@ -179,7 +154,7 @@ extern  {
 
 #[cfg(test)]
 mod tests {
-    use {test, rand, signature};
+    use {test, rand};
     use super::Ed25519KeyPair;
     use untrusted;
 
@@ -200,12 +175,11 @@ mod tests {
             let actual_sig = key_pair.sign(&msg);
             assert_eq!(&expected_sig[..], actual_sig.as_slice());
 
-            let public_key = untrusted::Input::from(&public_key);
+            let public_key = key_pair.public_key();
             let msg = untrusted::Input::from(&msg);
             let expected_sig = untrusted::Input::from(&expected_sig);
 
-            assert!(signature::verify(&signature::ED25519, public_key,
-                                      msg, expected_sig).is_ok());
+            assert!(public_key.verify(msg, expected_sig).is_ok());
 
             Ok(())
         });
