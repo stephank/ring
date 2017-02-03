@@ -228,6 +228,7 @@ pub use ec::eddsa::{
 
     ED25519,
 
+    Ed25519PublicKey,
     Ed25519KeyPair,
 };
 

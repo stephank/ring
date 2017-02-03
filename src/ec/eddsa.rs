@@ -20,6 +20,35 @@ use untrusted;
 /// Parameters for EdDSA signing and verification.
 pub struct EdDSAParameters;
 
+/// An Ed25519 public key, for verifying signatures.
+pub struct Ed25519PublicKey<'a>(&'a [u8]);
+
+impl<'a> Ed25519PublicKey<'a> {
+    /// Create a new public key referencing the given of bytes.
+    /// The slice must contain 32 little-endian-encoded bytes.
+    pub fn from_bytes(public_key: &[u8])
+                      -> Result<Ed25519PublicKey, error::Unspecified> {
+        if public_key.len() != 32 {
+            return Err(error::Unspecified);
+        }
+        Ok(Ed25519PublicKey(public_key))
+    }
+
+    /// Returns a reference to the little-endian-encoded public key bytes.
+    pub fn public_key_bytes(&self) -> &[u8] { self.0 }
+
+    /// Verify a message signature using this public key.
+    pub fn verify(&self, msg: untrusted::Input, signature: untrusted::Input)
+                  -> Result<(), error::Unspecified> {
+        let msg = msg.as_slice_less_safe();
+        let signature = signature.as_slice_less_safe();
+        bssl::map_result(unsafe {
+            GFp_ed25519_verify(msg.as_ptr(), msg.len(), signature.as_ptr(),
+                               self.0.as_ptr())
+        })
+    }
+}
+
 /// An Ed25519 key pair, for signing.
 pub struct Ed25519KeyPair {
     private_public: [u8; 64],
@@ -90,6 +119,11 @@ impl Ed25519KeyPair {
     /// Returns a reference to the little-endian-encoded public key bytes.
     pub fn public_key_bytes(&self) -> &[u8] { &self.private_public[32..] }
 
+    /// Creates a new `Ed25519PublicKey` referencing this key pair.
+    pub fn public_key(&self) -> Ed25519PublicKey {
+        Ed25519PublicKey::from_bytes(self.public_key_bytes()).unwrap()
+    }
+
     /// Returns the signature of the message `msg`.
     pub fn sign(&self, msg: &[u8]) -> signature::Signature {
         let mut signature_bytes = [0u8; 64];
@@ -98,6 +132,12 @@ impl Ed25519KeyPair {
                              msg.len(), self.private_public.as_ptr());
         }
         signature::Signature::new(signature_bytes)
+    }
+
+    /// Verify a message signature using the public key of this key pair.
+    pub fn verify(&self, msg: untrusted::Input, signature: untrusted::Input)
+                  -> Result<(), error::Unspecified> {
+        self.public_key().verify(msg, signature)
     }
 }
 
@@ -112,16 +152,12 @@ pub static ED25519: EdDSAParameters = EdDSAParameters {};
 impl signature::VerificationAlgorithm for EdDSAParameters {
     fn verify(&self, public_key: untrusted::Input, msg: untrusted::Input,
               signature: untrusted::Input) -> Result<(), error::Unspecified> {
-        let public_key = public_key.as_slice_less_safe();
-        if public_key.len() != 32 || signature.len() != 64 {
+        if signature.len() != 64 {
             return Err(error::Unspecified);
         }
-        let msg = msg.as_slice_less_safe();
-        let signature = signature.as_slice_less_safe();
-        bssl::map_result(unsafe {
-            GFp_ed25519_verify(msg.as_ptr(), msg.len(), signature.as_ptr(),
-                               public_key.as_ptr())
-        })
+        let public_key = try!(Ed25519PublicKey::from_bytes(
+                              public_key.as_slice_less_safe()));
+        public_key.verify(msg, signature)
     }
 }
 
