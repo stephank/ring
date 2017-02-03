@@ -20,17 +20,37 @@ use super::ops::*;
 use super::public_key::*;
 use untrusted;
 
-/// Parameters for ECDSA signing and verification.
-pub struct ECDSAParameters {
-    ops: &'static PublicScalarOps,
-    digest_alg: &'static digest::Algorithm,
+
+/// An ECDSA public key, for verifying signatures.
+///
+/// An `ECDSAPublicKey` is tied to specific `ECDSAParameters`.
+pub struct ECDSAPublicKey {
+    params: &'static ECDSAParameters,
+    xy: (Elem, Elem),
 }
 
-impl signature::VerificationAlgorithm for ECDSAParameters {
-    // Verify an ECDSA signature as documented in the NSA Suite B Implementer's
-    // Guide to ECDSA Section 3.4.2: ECDSA Signature Verification.
-    fn verify(&self, public_key: untrusted::Input, msg: untrusted::Input,
-              signature: untrusted::Input) -> Result<(), error::Unspecified> {
+impl ECDSAPublicKey {
+    /// Parses a public key encoded in uncompressed form. The key is validated
+    /// using the ECC Partial Public-Key Validation Routine from
+    /// [NIST SP 800-56A, revision 2] Section 5.6.2.3.3, the NSA's
+    /// "Suite B Implementer's Guide to NIST SP 800-56A," Appendix B.3, and the
+    /// NSA's "Suite B Implementer's Guide to FIPS 186-3 (ECDSA)," Appendix A.3.
+    ///
+    /// [NIST SP 800-56A, revision 2]:
+    ///     http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Ar2.pdf
+    pub fn from_bytes(params: &'static ECDSAParameters, input: untrusted::Input)
+                      -> Result<ECDSAPublicKey, error::Unspecified> {
+        let parsed = try!(parse_uncompressed_point(
+            params.ops.public_key_ops, input));
+        Ok(ECDSAPublicKey { params: params, xy: parsed })
+    }
+
+    /// Verify an ECDSA signature as documented in the NSA Suite B Implementer's
+    /// Guide to ECDSA Section 3.4.2: ECDSA Signature Verification.
+    pub fn verify(&self, msg: untrusted::Input, signature: untrusted::Input)
+                  -> Result<(), error::Unspecified> {
+        let ops = self.params.ops;
+
         // NSA Guide Prerequisites:
         //
         //    Prior to accepting a verified digital signature as valid the
@@ -48,15 +68,13 @@ impl signature::VerificationAlgorithm for ECDSAParameters {
         // can do. Prerequisite #2 is handled implicitly as the domain
         // parameters are hard-coded into the source. Prerequisite #3 is
         // handled by `parse_uncompressed_point`.
-        let peer_pub_key =
-            try!(parse_uncompressed_point(self.ops.public_key_ops, public_key));
 
         // NSA Guide Step 1: "If r and s are not both integers in the interval
         // [1, n − 1], output INVALID."
         let (r, s) = try!(signature.read_all(error::Unspecified, |input| {
             der::nested(input, der::Tag::Sequence, error::Unspecified, |input| {
-                let r = try!(self.ops.scalar_parse(input));
-                let s = try!(self.ops.scalar_parse(input));
+                let r = try!(ops.scalar_parse(input));
+                let s = try!(ops.scalar_parse(input));
                 Ok((r, s))
             })
         }));
@@ -65,22 +83,22 @@ impl signature::VerificationAlgorithm for ECDSAParameters {
         // Hash(M)."
         // NSA Guide Step 3: "Convert the bit string H to an integer e as
         // described in Appendix B.2."
-        let e = digest_scalar(self.ops, self.digest_alg, msg);
+        let e = digest_scalar(ops, self.params.digest_alg, msg);
 
         // NSA Guide Step 4: "Compute w = s**−1 mod n, using the routine in
         // Appendix B.1."
-        let w = self.ops.scalar_inv_to_mont(&s);
+        let w = ops.scalar_inv_to_mont(&s);
 
         // NSA Guide Step 5: "Compute u1 = (e * w) mod n, and compute
         // u2 = (r * w) mod n."
-        let u1 = self.ops.scalar_mul_mixed(&e, &w);
-        let u2 = self.ops.scalar_mul_mixed(&r, &w);
+        let u1 = ops.scalar_mul_mixed(&e, &w);
+        let u2 = ops.scalar_mul_mixed(&r, &w);
 
         // NSA Guide Step 6: "Compute the elliptic curve point
         // R = (xR, yR) = u1*G + u2*Q, using EC scalar multiplication and EC
         // addition. If R is equal to the point at infinity, output INVALID."
         let product =
-            twin_mul(self.ops.private_key_ops, &u1, &u2, &peer_pub_key);
+            twin_mul(ops.private_key_ops, &u1, &u2, &self.xy);
 
         // Verify that the point we computed is on the curve; see
         // `verify_affine_point_is_on_the_curve_scaled` for details on why. It
@@ -90,7 +108,7 @@ impl signature::VerificationAlgorithm for ECDSAParameters {
         // But, we're going to avoid converting to affine for performance
         // reasons, so we do the verification using the Jacobian coordinates.
         let z2 = try!(verify_jacobian_point_is_on_the_curve(
-                        self.ops.public_key_ops.common, &product));
+                        ops.public_key_ops.common, &product));
 
         // NSA Guide Step 7: "Compute v = xR mod n."
         // NSA Guide Step 8: "Compare v and r0. If v = r0, output VALID;
@@ -98,7 +116,7 @@ impl signature::VerificationAlgorithm for ECDSAParameters {
         //
         // Instead, we use Greg Maxwell's trick to avoid the inversion mod `q`
         // that would be necessary to compute the affine X coordinate.
-        let x = self.ops.public_key_ops.common.point_x(&product);
+        let x = ops.public_key_ops.common.point_x(&product);
         fn sig_r_equals_x(ops: &PublicScalarOps, r: &ElemDecoded,
                           x: &ElemUnreduced, z2: &ElemUnreduced) -> bool {
             let cops = ops.public_key_ops.common;
@@ -106,20 +124,35 @@ impl signature::VerificationAlgorithm for ECDSAParameters {
             let x_decoded = cops.elem_decoded(x);
             ops.elem_decoded_equals(&r_jacobian, &x_decoded)
         }
-        let r = self.ops.scalar_as_elem_decoded(&r);
-        if sig_r_equals_x(self.ops, &r, &x, &z2) {
+        let r = ops.scalar_as_elem_decoded(&r);
+        if sig_r_equals_x(ops, &r, &x, &z2) {
             return Ok(());
         }
-        if self.ops.elem_decoded_less_than(&r, &self.ops.q_minus_n) {
+        if ops.elem_decoded_less_than(&r, &ops.q_minus_n) {
             let r_plus_n =
-                self.ops.elem_decoded_sum(&r,
-                                          &self.ops.public_key_ops.common.n);
-            if sig_r_equals_x(self.ops, &r_plus_n, &x, &z2) {
+                ops.elem_decoded_sum(&r, &ops.public_key_ops.common.n);
+            if sig_r_equals_x(ops, &r_plus_n, &x, &z2) {
                 return Ok(());
             }
         }
 
         Err(error::Unspecified)
+    }
+}
+
+
+/// Parameters for ECDSA signing and verification.
+pub struct ECDSAParameters {
+    ops: &'static PublicScalarOps,
+    digest_alg: &'static digest::Algorithm,
+}
+
+impl signature::VerificationAlgorithm for ECDSAParameters {
+    fn verify(&'static self, public_key: untrusted::Input,
+              msg: untrusted::Input, signature: untrusted::Input)
+              -> Result<(), error::Unspecified> {
+        let public_key = try!(ECDSAPublicKey::from_bytes(self, public_key));
+        public_key.verify(msg, signature)
     }
 }
 

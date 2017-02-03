@@ -215,6 +215,7 @@ use untrusted;
 
 pub use ec::suite_b::ecdsa::{
     ECDSAParameters,
+    ECDSAPublicKey,
 
     ECDSA_P256_SHA256_ASN1,
     ECDSA_P256_SHA384_ASN1,
@@ -299,8 +300,9 @@ impl<'a> Signature {
 pub trait VerificationAlgorithm: Sync + private::Private {
     /// Verify the signature `signature` of message `msg` with the public key
     /// `public_key`.
-    fn verify(&self, public_key: untrusted::Input, msg: untrusted::Input,
-              signature: untrusted::Input) -> Result<(), error::Unspecified>;
+    fn verify(&'static self, public_key: untrusted::Input,
+              msg: untrusted::Input, signature: untrusted::Input)
+              -> Result<(), error::Unspecified>;
 }
 
 /// Verify the signature `signature` of message `msg` with the public key
@@ -329,7 +331,7 @@ pub trait VerificationAlgorithm: Sync + private::Private {
 /// }
 /// # fn main() { }
 /// ```
-pub fn verify(alg: &VerificationAlgorithm, public_key: untrusted::Input,
+pub fn verify(alg: &'static VerificationAlgorithm, public_key: untrusted::Input,
               msg: untrusted::Input, signature: untrusted::Input)
               -> Result<(), error::Unspecified> {
     init::init_once();
